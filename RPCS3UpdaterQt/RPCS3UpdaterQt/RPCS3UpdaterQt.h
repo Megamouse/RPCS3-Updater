@@ -23,8 +23,7 @@ private:
 	std::unique_ptr<QTimer> progress_timer;
 	std::unique_ptr<QProgressDialog> progress_dialog;
 
-	QString api = "https://update.rpcs3.net/?c=";
-	QString file = "balls.7z";
+	QString api = "https://update.rpcs3.net/?c=XXXXXXXX";
 	QString latest;
 
 private slots:

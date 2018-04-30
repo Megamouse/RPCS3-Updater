@@ -53,7 +53,7 @@ void RPCS3UpdaterQt::OnUpdate()
 
 	// Send network request and wait for response
 	QNetworkAccessManager *network_access_manager = new QNetworkAccessManager();
-	QNetworkRequest network_request = QNetworkRequest(QUrl(api + file));
+	QNetworkRequest network_request = QNetworkRequest(QUrl(api));
 	QNetworkReply *network_reply = network_access_manager->get(network_request);
 
 	// Show Progress
@@ -132,7 +132,7 @@ void RPCS3UpdaterQt::ReadJSON(QByteArray data)
 
 	int return_code = json_data["return_code"].toInt();
 
-	if (return_code < 0)
+	if (return_code < -1)
 	{
 		// We failed to retrieve a new update
 
@@ -140,9 +140,9 @@ void RPCS3UpdaterQt::ReadJSON(QByteArray data)
 
 		switch (return_code)
 		{
-		case -1:
-			error_message = tr("Server Error - Internal Error");
-			break;
+		//case -1:
+		//	error_message = tr("Server Error - Internal Error");
+		//	break;
 		case -2:
 			error_message = tr("Server Error - Maintenance Mode");
 			break;
@@ -151,18 +151,28 @@ void RPCS3UpdaterQt::ReadJSON(QByteArray data)
 			break;
 		}
 
-		QMessageBox::critical(nullptr, tr("Error code %0!").arg(return_code), error_message + "\n\n" + api + file);
+		QMessageBox::critical(nullptr, tr("Error code %0!").arg(return_code), error_message + "\n\n" + api);
 		return;
 	}
 
-	// Check for appveyor node
-	if (!json_data["appveyor"].isObject())
+	// Check for latest_build node
+	if (!json_data["latest_build"].isObject())
 	{
-		QMessageBox::critical(nullptr, tr("Error!"), tr("No appveyor found!"));
+		QMessageBox::critical(nullptr, tr("Error!"), tr("No latest build found!"));
 		return;
 	}
 
-	// String retrieved from JSON
-	QString result = json_data["appveyor"].toString();
-	QMessageBox::information(nullptr, tr("Error!"), tr("The response is: %0").arg(result));
+	QJsonObject latest_build = json_data["latest_build"].toObject();
+
+#ifdef _WIN32
+	QJsonObject os = latest_build["windows"].toObject();
+#elif __linux__
+	QJsonObject os = latest_build["linux"].toObject();
+#endif
+
+	QString pr = latest_build.value("pr").toString();
+	QString datetime = os.value("datetime").toString();
+	QString download = os.value("download").toString();
+
+	QMessageBox::information(nullptr, tr("Success!"), tr("PR: %1\nDatetime: %2\nDownload: %3\n").arg(pr).arg(datetime).arg(download));
 }
