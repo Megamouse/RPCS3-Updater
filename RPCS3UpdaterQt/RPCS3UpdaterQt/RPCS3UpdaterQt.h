@@ -38,6 +38,7 @@ private:
 
 	std::unique_ptr<QTimer> progress_timer;
 	std::unique_ptr<QProgressDialog> progress_dialog;
+	std::unique_ptr<QNetworkAccessManager> network_access_manager;
 	QNetworkReply *network_reply;
 
 	QString api = "https://update.rpcs3.net/?c=XXXXXXXX";

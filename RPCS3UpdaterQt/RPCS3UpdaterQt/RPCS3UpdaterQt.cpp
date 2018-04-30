@@ -9,6 +9,9 @@ RPCS3UpdaterQt::RPCS3UpdaterQt(QWidget *parent)
 
 	ui.setupUi(this);
 
+	network_access_manager.reset(new QNetworkAccessManager());
+	network_access_manager->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
+
 	//================================================================================
 	// Menu
 	//================================================================================
@@ -55,7 +58,6 @@ void RPCS3UpdaterQt::OnUpdate()
 	}
 
 	// Send network request and wait for response
-	QNetworkAccessManager *network_access_manager = new QNetworkAccessManager();
 	QNetworkRequest network_request = QNetworkRequest(QUrl(api));
 	network_reply = network_access_manager->get(network_request);
 
@@ -63,24 +65,29 @@ void RPCS3UpdaterQt::OnUpdate()
 	ShowProgress(tr("Downloading update information"));
 
 	// Handle response according to its contents
-	connect(network_reply, &QNetworkReply::finished, [=]()
+	connect(network_reply, &QNetworkReply::finished, [&]()
 	{
 		// Handle Errors
-		if (network_reply->error() != QNetworkReply::NoError)
+		switch (network_reply->error())
 		{
-			// We failed to retrieve a new update
+		case QNetworkReply::NoError:
+			ReadJSON(network_reply->readAll());
+			break;
+		case QNetworkReply::OperationCanceledError:
+			break;
+		default:
 			QMessageBox::critical(nullptr, tr("Error!"), network_reply->errorString());
-			return;
+			break;
 		}
-
-		// Read data from network reply
-		ReadJSON(network_reply->readAll());
 
 		// Clean up network reply
 		network_reply->deleteLater();
 
-		// Download the latest build
-		Download();
+		if (network_reply->error() == QNetworkReply::NoError)
+		{
+			// Download the latest build
+			Download();
+		}
 	});
 }
 
@@ -138,7 +145,6 @@ bool RPCS3UpdaterQt::ReadJSON(QByteArray data)
 
 void RPCS3UpdaterQt::Download()
 {
-	QNetworkAccessManager *network_access_manager = new QNetworkAccessManager();
 	QNetworkRequest network_request = QNetworkRequest(QUrl(latest));
 	network_reply = network_access_manager->get(network_request);
 
@@ -149,15 +155,17 @@ void RPCS3UpdaterQt::Download()
 	connect(network_reply, &QNetworkReply::finished, [=]()
 	{
 		// Handle Errors
-		if (network_reply->error() != QNetworkReply::NoError)
+		switch (network_reply->error())
 		{
-			// We failed to retrieve a new update
+		case QNetworkReply::NoError:
+			SaveFile(network_reply);
+			break;
+		case QNetworkReply::OperationCanceledError:
+			break;
+		default:
 			QMessageBox::critical(nullptr, tr("Error!"), network_reply->errorString());
-			return;
+			break;
 		}
-
-		// Read data from network reply
-		SaveFile(network_reply);
 
 		// Clean up network reply
 		network_reply->deleteLater();
@@ -217,7 +225,7 @@ void RPCS3UpdaterQt::ShowProgress(QString message)
 	});
 
 	// Handle abort
-	connect(progress_dialog.get(), &QProgressDialog::rejected, network_reply, &QNetworkReply::abort);
+	connect(progress_dialog.get(), &QProgressDialog::canceled, network_reply, &QNetworkReply::abort);
 
 	// Clean Up
 	connect(network_reply, &QNetworkReply::finished, [this]()
