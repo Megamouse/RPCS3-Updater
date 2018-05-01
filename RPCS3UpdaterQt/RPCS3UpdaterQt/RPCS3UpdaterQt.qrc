@@ -1,4 +1,5 @@
 <RCC>
-    <qresource prefix="RPCS3UpdaterQt">
+    <qresource prefix="/RPCS3UpdaterQt">
+        <file>rpcs3.ico</file>
     </qresource>
 </RCC>

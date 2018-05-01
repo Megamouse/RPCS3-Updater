@@ -21,6 +21,7 @@ int main(int argc, char *argv[])
 	QCoreApplication::setAttribute(Qt::AA_DisableWindowContextHelpButton);
 
 	QApplication a(argc, argv);
+	a.setWindowIcon(QIcon(":/RPCS3UpdaterQt/rpcs3.ico"));
 	RPCS3UpdaterQt w;
 	w.show();
 	return a.exec();

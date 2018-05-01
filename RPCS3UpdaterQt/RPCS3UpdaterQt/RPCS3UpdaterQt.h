@@ -26,25 +26,24 @@ class RPCS3UpdaterQt : public QMainWindow
 
 public:
 	RPCS3UpdaterQt(QWidget *parent = Q_NULLPTR);
-	~RPCS3UpdaterQt();
 
 private:
 	bool ReadJSON(QByteArray data);
-	void Download();
 	void SaveFile(QNetworkReply *network_reply);
 	void ShowProgress(QString message);
 
 	Ui::RPCS3UpdaterQtClass ui;
 
-	std::unique_ptr<QTimer> progress_timer;
-	std::unique_ptr<QProgressDialog> progress_dialog;
 	std::unique_ptr<QNetworkAccessManager> network_access_manager;
 	QNetworkReply *network_reply;
 
 	QString api = "https://update.rpcs3.net/?c=XXXXXXXX";
-	QString latest;
 
 private slots:
 	void OnAbout();
+	void OnCancel();
+	void OnDownload();
+	void OnDownloadFinished();
 	void OnUpdate();
+	void OnUpdateFinished();
 };

@@ -16,6 +16,9 @@ RPCS3UpdaterQt::RPCS3UpdaterQt(QWidget *parent)
 	// Menu
 	//================================================================================
 
+	// connect 'File->Exit' to quit the application
+	connect(ui.actionExit, &QAction::triggered, this, &RPCS3UpdaterQt::close);
+
 	// connect 'Help->About' to the about dialog
 	connect(ui.actionAbout, &QAction::triggered, this, &RPCS3UpdaterQt::OnAbout);
 
@@ -27,25 +30,22 @@ RPCS3UpdaterQt::RPCS3UpdaterQt(QWidget *parent)
 	//================================================================================
 
 	connect(ui.updateButton, &QPushButton::clicked, this, &RPCS3UpdaterQt::OnUpdate);
-}
-
-RPCS3UpdaterQt::~RPCS3UpdaterQt()
-{
-	// Clean up Progress Dialog
-	if (progress_dialog)
-	{
-		progress_dialog->close();
-	}
-
-	// Clean up Progress Timer
-	if (progress_timer)
-	{
-		progress_timer->stop();
-	}
+	connect(ui.downloadButton, &QPushButton::clicked, this, &RPCS3UpdaterQt::OnDownload);
+	connect(ui.cancelButton, &QPushButton::clicked, this, &RPCS3UpdaterQt::OnCancel);
 }
 
 void RPCS3UpdaterQt::OnAbout()
 {
+}
+
+void RPCS3UpdaterQt::OnCancel()
+{
+	if (!network_reply)
+	{
+		return;
+	}
+
+	network_reply->abort();
 }
 
 void RPCS3UpdaterQt::OnUpdate()
@@ -57,38 +57,104 @@ void RPCS3UpdaterQt::OnUpdate()
 		return;
 	}
 
+	ui.cancelButton->setEnabled(true);
+	ui.updateButton->setEnabled(false);
+	ui.downloadButton->setEnabled(false);
+
 	// Send network request and wait for response
 	QNetworkRequest network_request = QNetworkRequest(QUrl(api));
 	network_reply = network_access_manager->get(network_request);
 
 	// Initialise and show progress bar
-	ShowProgress(tr("Downloading update information"));
+	ShowProgress(tr("Downloading build info."));
 
 	// Handle response according to its contents
-	connect(network_reply, &QNetworkReply::finished, [&]()
+	connect(network_reply, &QNetworkReply::finished, this, &RPCS3UpdaterQt::OnUpdateFinished);
+}
+
+void RPCS3UpdaterQt::OnUpdateFinished()
+{
+	if (!network_reply)
 	{
-		// Handle Errors
-		switch (network_reply->error())
-		{
-		case QNetworkReply::NoError:
-			ReadJSON(network_reply->readAll());
-			break;
-		case QNetworkReply::OperationCanceledError:
-			break;
-		default:
-			QMessageBox::critical(nullptr, tr("Error!"), network_reply->errorString());
-			break;
-		}
+		return;
+	}
 
-		// Clean up network reply
-		network_reply->deleteLater();
+	// Handle Errors
+	switch (network_reply->error())
+	{
+	case QNetworkReply::NoError:
+		ReadJSON(network_reply->readAll());
+		ui.progressLabel->setText(tr("Build info retrieved"));
+		break;
+	case QNetworkReply::OperationCanceledError:
+		ui.progressLabel->setText(tr("Build info canceled"));
+		break;
+	default:
+		ui.progressLabel->setText(tr("Build info error"));
+		QMessageBox::critical(nullptr, tr("Error!"), network_reply->errorString());
+		break;
+	}
 
-		if (network_reply->error() == QNetworkReply::NoError)
-		{
-			// Download the latest build
-			Download();
-		}
-	});
+	// Clean up network reply
+	network_reply->deleteLater();
+
+	ui.cancelButton->setEnabled(false);
+	ui.updateButton->setEnabled(true);
+	ui.downloadButton->setEnabled(network_reply->error() == QNetworkReply::NoError);
+}
+
+void RPCS3UpdaterQt::OnDownload()
+{
+	QUrl latest(ui.download_data->text());
+
+	if (latest.isValid() == false)
+	{
+		return;
+	}
+
+	ui.cancelButton->setEnabled(true);
+	ui.updateButton->setEnabled(false);
+	ui.downloadButton->setEnabled(false);
+
+	QNetworkRequest network_request = QNetworkRequest(latest);
+	network_reply = network_access_manager->get(network_request);
+
+	// Initialise and show progress bar
+	ShowProgress(tr("Downloading latest build."));
+
+	// Handle response according to its contents
+	connect(network_reply, &QNetworkReply::finished, this, &RPCS3UpdaterQt::OnDownloadFinished);
+}
+
+void RPCS3UpdaterQt::OnDownloadFinished()
+{
+	if (!network_reply)
+	{
+		return;
+	}
+
+	// Handle Errors
+	switch (network_reply->error())
+	{
+	case QNetworkReply::NoError:
+		SaveFile(network_reply);
+		ui.progressLabel->setText(tr("Download finished"));
+		break;
+	case QNetworkReply::OperationCanceledError:
+		ui.progressLabel->setText(tr("Download canceled"));
+		break;
+	default:
+		ui.progressLabel->setText(tr("Download error"));
+		QMessageBox::critical(nullptr, tr("Error!"), network_reply->errorString());
+		break;
+	}
+
+	ui.cancelButton->setEnabled(false);
+	ui.updateButton->setEnabled(true);
+	ui.downloadButton->setEnabled(true);
+
+	// Clean up network reply
+	network_reply->deleteLater();
 }
 
 bool RPCS3UpdaterQt::ReadJSON(QByteArray data)
@@ -98,7 +164,7 @@ bool RPCS3UpdaterQt::ReadJSON(QByteArray data)
 
 	int return_code = json_data["return_code"].toInt();
 
-	if (return_code < -1)
+	if (return_code < -1/*0*/)
 	{
 		// We failed to retrieve a new update
 		QString error_message;
@@ -135,41 +201,11 @@ bool RPCS3UpdaterQt::ReadJSON(QByteArray data)
 	QJsonObject os = latest_build["linux"].toObject();
 #endif
 
-	QString pr = latest_build.value("pr").toString();
-	QString datetime = os.value("datetime").toString();
-	latest = os.value("download").toString();
+	ui.pr_data->setText(latest_build.value("pr").toString());
+	ui.datetime_data->setText(os.value("datetime").toString());
+	ui.download_data->setText(os.value("download").toString());
 
-	QMessageBox::information(nullptr, tr("Success!"), tr("PR: %0\nDatetime: %1\nDownload: %2\n").arg(pr).arg(datetime).arg(latest));
 	return true;
-}
-
-void RPCS3UpdaterQt::Download()
-{
-	QNetworkRequest network_request = QNetworkRequest(QUrl(latest));
-	network_reply = network_access_manager->get(network_request);
-
-	// Initialise and show progress bar
-	ShowProgress(tr("Downloading latest build"));
-
-	// Handle response according to its contents
-	connect(network_reply, &QNetworkReply::finished, [=]()
-	{
-		// Handle Errors
-		switch (network_reply->error())
-		{
-		case QNetworkReply::NoError:
-			SaveFile(network_reply);
-			break;
-		case QNetworkReply::OperationCanceledError:
-			break;
-		default:
-			QMessageBox::critical(nullptr, tr("Error!"), network_reply->errorString());
-			break;
-		}
-
-		// Clean up network reply
-		network_reply->deleteLater();
-	});
 }
 
 void RPCS3UpdaterQt::SaveFile(QNetworkReply *network_reply)
@@ -189,57 +225,26 @@ void RPCS3UpdaterQt::SaveFile(QNetworkReply *network_reply)
 
 void RPCS3UpdaterQt::ShowProgress(QString message)
 {
-	// Show Progress
-	progress_dialog.reset(new QProgressDialog(tr(".Please wait."), tr("Abort"), 0, 100));
-	progress_dialog->setWindowTitle(message);
-	progress_dialog->setFixedWidth(QLabel("This is the very length of the progressbar due to hidpi reasons.").sizeHint().width());
-	progress_dialog->setValue(0);
-	progress_dialog->show();
+	ui.progressBar->setValue(0);
+	ui.progressBar->setEnabled(true);
 
-	// Animate progress dialog a bit
-	int timer_count = 0;
-	progress_timer.reset(new QTimer(this));
-	connect(progress_timer.get(), &QTimer::timeout, [&]()
-	{
-		switch (++timer_count % 3)
-		{
-		case 0:
-			timer_count = 0;
-			progress_dialog->setLabelText(tr(".Please wait."));
-			break;
-		case 1:
-			progress_dialog->setLabelText(tr("..Please wait.."));
-			break;
-		default:
-			progress_dialog->setLabelText(tr("...Please wait..."));
-			break;
-		}
-	});
-	progress_timer->start(500);
+	ui.progressLabel->setText(message + tr(" Please wait..."));
 
 	// Handle new progress
 	connect(network_reply, &QNetworkReply::downloadProgress, [this](qint64 bytesReceived, qint64 bytesTotal)
 	{
-		progress_dialog->setMaximum(bytesTotal);
-		progress_dialog->setValue(bytesReceived);
+		ui.progressBar->setMaximum(bytesTotal);
+		ui.progressBar->setValue(bytesReceived);
 	});
-
-	// Handle abort
-	connect(progress_dialog.get(), &QProgressDialog::canceled, network_reply, &QNetworkReply::abort);
 
 	// Clean Up
 	connect(network_reply, &QNetworkReply::finished, [this]()
 	{
-		// Clean up Progress Dialog
-		if (progress_dialog)
-		{
-			progress_dialog->close();
-		}
+		ui.progressBar->setEnabled(false);
 
-		// Clean up Progress Timer
-		if (progress_timer)
+		if (network_reply && network_reply->error() == QNetworkReply::NoError)
 		{
-			progress_timer->stop();
+			QApplication::beep();
 		}
 	});
 }
