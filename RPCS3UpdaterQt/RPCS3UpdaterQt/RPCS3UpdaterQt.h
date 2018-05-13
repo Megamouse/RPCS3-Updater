@@ -9,6 +9,9 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QFile>
+#include <QTemporaryDir>
+#include <QProcess>
+#include <QDirIterator>
 
 #include <QJsonObject>
 #include <QJsonDocument>
@@ -20,6 +23,11 @@
 
 #include <memory>
 
+static const QStringList forbidden_directories = {
+	"dev_hdd0" , "dev_hdd1" , "data" , "dev_flash" , "dev_usb000" , "shaderlog"
+};
+static const QString old_extension = "rpcs3-deprecated";
+
 class RPCS3UpdaterQt : public QMainWindow
 {
 	Q_OBJECT
@@ -29,12 +37,16 @@ public:
 
 private:
 	bool ReadJSON(QByteArray data);
-	void SaveFile(QNetworkReply *network_reply);
+	QString SaveFile(QNetworkReply *network_reply);
 	void ShowProgress(QString message);
+	void Extract(QString path);
+	QByteArray GetFileHash(QFile *file, QCryptographicHash::Algorithm algorithm = QCryptographicHash::Algorithm::Md5);
+	static void CleanUp(QDir directory = qApp->applicationDirPath());
 
 	Ui::RPCS3UpdaterQtClass ui;
 
 	std::unique_ptr<QNetworkAccessManager> network_access_manager;
+	std::unique_ptr<QTemporaryDir> extraction_directory, download_directory;
 	QNetworkReply *network_reply;
 
 	QString api = "https://update.rpcs3.net/?c=XXXXXXXX";

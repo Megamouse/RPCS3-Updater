@@ -12,6 +12,8 @@ RPCS3UpdaterQt::RPCS3UpdaterQt(QWidget *parent)
 	network_access_manager.reset(new QNetworkAccessManager());
 	network_access_manager->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
 
+	CleanUp(qApp->applicationDirPath());
+
 	//================================================================================
 	// Menu
 	//================================================================================
@@ -137,7 +139,7 @@ void RPCS3UpdaterQt::OnDownloadFinished()
 	switch (network_reply->error())
 	{
 	case QNetworkReply::NoError:
-		SaveFile(network_reply);
+		Extract(SaveFile(network_reply));
 		ui.progressLabel->setText(tr("Download finished"));
 		break;
 	case QNetworkReply::OperationCanceledError:
@@ -208,19 +210,93 @@ bool RPCS3UpdaterQt::ReadJSON(QByteArray data)
 	return true;
 }
 
-void RPCS3UpdaterQt::SaveFile(QNetworkReply *network_reply)
+QString RPCS3UpdaterQt::SaveFile(QNetworkReply *network_reply)
 {
-	QString filename = network_reply->url().fileName();
+	download_directory.reset(new QTemporaryDir());
+	QString filename = download_directory->path() + "/" + network_reply->url().fileName();
 	QFile file(filename);
 
 	if (!file.open(QIODevice::WriteOnly))
 	{
 		QMessageBox::critical(nullptr, tr("Error!"), tr("Could not open %0 for writing: %1").arg(filename).arg(file.errorString()));
-		return;
+		return NULL;
 	}
 
 	file.write(network_reply->readAll());
 	file.close();
+	return filename;
+}
+
+void RPCS3UpdaterQt::Extract(QString path) {
+#ifdef _WIN32
+	extraction_directory.reset(new QTemporaryDir());
+	QProcess *process = new QProcess(this);
+	QString file = QString("./7za.exe x -aoa -o\"%1\" \"%2\"").arg(extraction_directory->path(), path);
+	process->start(file);
+	process->waitForFinished();
+	process->close();
+	download_directory->remove();
+
+	QDirIterator* it = new QDirIterator(extraction_directory->path(), QDirIterator::Subdirectories);
+	while (it->hasNext())
+	{
+		QFileInfo info = QFileInfo(it->next());
+		if (info.exists() && info.isFile()) 
+		{
+			QString realPath = info.absoluteFilePath().replace(extraction_directory->path(), qApp->applicationDirPath());
+
+			QFile* updatedFile = new QFile(info.absoluteFilePath());
+			QFile* oldFile = new QFile(realPath);
+
+			if (GetFileHash(updatedFile) != GetFileHash(oldFile))
+			{
+				oldFile->rename(oldFile->fileName() + "." + old_extension);
+				updatedFile->rename(realPath);
+			}
+		}
+		else if (info.isDir())
+		{
+			QString realPath = info.absoluteFilePath().replace(extraction_directory->path(), qApp->applicationDirPath());
+			QFileInfo realInfo(realPath);
+			if (!realInfo.exists()) QDir().mkdir(realPath);
+		}
+	}
+#elif __linux__
+#endif
+	extraction_directory->remove();
+}
+
+QByteArray RPCS3UpdaterQt::GetFileHash(QFile *file, QCryptographicHash::Algorithm algorithm)
+{
+	if (!file->exists()) return QByteArray();
+	file->open(QIODevice::ReadOnly);
+	QByteArray hash = QCryptographicHash::hash(file->readAll(), algorithm);
+	file->close();
+	return hash;
+}
+
+void RPCS3UpdaterQt::CleanUp(QDir directory)
+{
+	QStringList files = directory.entryList(QDir::NoDotAndDotDot | QDir::Dirs | QDir::Files);
+	foreach(QString file, files)
+	{
+		QFileInfo info(file);
+		if (forbidden_directories.contains(info.fileName())) continue;
+		if (info.isDir()) 
+		{
+			CleanUp(QDir(info.absoluteFilePath()));
+		}
+		else
+		{
+			if (info.suffix().compare(old_extension) == 0)
+			{
+				QFile file(info.absoluteFilePath());
+				qDebug() << file;
+				qDebug() << file.remove();
+				qDebug() << file.errorString();
+			}
+		}
+	}
 }
 
 void RPCS3UpdaterQt::ShowProgress(QString message)
