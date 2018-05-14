@@ -53,7 +53,7 @@ void RPCS3UpdaterQt::OnCancel()
 void RPCS3UpdaterQt::OnUpdate()
 {
 	// Check for SSL and abort in case it is not supported
-	if (QSslSocket::supportsSsl() == false)
+	if (!QSslSocket::supportsSsl())
 	{
 		QMessageBox::critical(nullptr, tr("Warning!"), tr("Can not retrieve the Update! Please make sure your system supports SSL."));
 		return;
@@ -68,7 +68,7 @@ void RPCS3UpdaterQt::OnUpdate()
 	network_reply = network_access_manager->get(network_request);
 
 	// Initialise and show progress bar
-	ShowProgress(tr("Downloading build info."));
+	ShowDownloadProgress(tr("Downloading build info."));
 
 	// Handle response according to its contents
 	connect(network_reply, &QNetworkReply::finished, this, &RPCS3UpdaterQt::OnUpdateFinished);
@@ -122,7 +122,7 @@ void RPCS3UpdaterQt::OnDownload()
 	network_reply = network_access_manager->get(network_request);
 
 	// Initialise and show progress bar
-	ShowProgress(tr("Downloading latest build."));
+	ShowDownloadProgress(tr("Downloading latest build."));
 
 	// Handle response according to its contents
 	connect(network_reply, &QNetworkReply::finished, this, &RPCS3UpdaterQt::OnDownloadFinished);
@@ -228,42 +228,82 @@ QString RPCS3UpdaterQt::SaveFile(QNetworkReply *network_reply)
 }
 
 void RPCS3UpdaterQt::Extract(QString path) {
-#ifdef _WIN32
 	extraction_directory.reset(new QTemporaryDir());
-	QProcess *process = new QProcess(this);
-	QString file = QString("./7za.exe x -aoa -o\"%1\" \"%2\"").arg(extraction_directory->path(), path);
-	process->start(file);
-	process->waitForFinished();
-	process->close();
-	download_directory->remove();
+	extract_process = new QProcess(this);
 
+#ifdef _WIN32
+	const QString file = QString(R"(./7za.exe x -aoa -o"%1" "%2")").arg(extraction_directory->path(), path);
+	extract_process->start(file);
+	// extract_process->waitForFinished();
+	// qDebug() << extract_process->readAllStandardError();
+	// extract_process->close();
+
+	connect(extract_process, &QProcess::readyReadStandardOutput, [=]()
+	{
+		if (extract_process->canReadLine())
+		{
+			qDebug() << extract_process->readLine();
+		}
+	});
+
+	connect(extract_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), [=](int exit_code, QProcess::ExitStatus exit_status)
+	{
+		if (exit_status == QProcess::ExitStatus::NormalExit)
+		{
+			qDebug() << extract_process->readAll();
+			download_directory->remove();
+			extract_process->close();
+			UpdateFiles();
+		}
+		else
+		{
+			// TODO: Handle error
+		}
+		extraction_directory->remove();
+	});
+
+#elif __linux__
+#endif
+}
+
+void RPCS3UpdaterQt::UpdateFiles()
+{
+	// TODO: Free resource?? Leak
 	QDirIterator* it = new QDirIterator(extraction_directory->path(), QDirIterator::Subdirectories);
 	while (it->hasNext())
 	{
 		QFileInfo info = QFileInfo(it->next());
-		if (info.exists() && info.isFile()) 
+		const QString old_path = info.absoluteFilePath().replace(extraction_directory->path(), qApp->applicationDirPath());
+		if (info.exists() && info.isFile())
 		{
-			QString realPath = info.absoluteFilePath().replace(extraction_directory->path(), qApp->applicationDirPath());
 
-			QFile* updatedFile = new QFile(info.absoluteFilePath());
-			QFile* oldFile = new QFile(realPath);
+			QFile* new_file = new QFile(info.absoluteFilePath());
+			QFile* old_file = new QFile(old_path);
 
-			if (GetFileHash(updatedFile) != GetFileHash(oldFile))
+			if (GetFileHash(new_file) != GetFileHash(old_file))
 			{
-				oldFile->rename(oldFile->fileName() + "." + old_extension);
-				updatedFile->rename(realPath);
+				old_file->rename(old_file->fileName() + "." + deprecated_extension);
+				new_file->rename(old_path);
 			}
 		}
 		else if (info.isDir())
 		{
-			QString realPath = info.absoluteFilePath().replace(extraction_directory->path(), qApp->applicationDirPath());
-			QFileInfo realInfo(realPath);
-			if (!realInfo.exists()) QDir().mkdir(realPath);
+			QDir dir(old_path);
+			if (!dir.exists()) 
+			{
+				if(dir.mkpath(old_path))
+				{
+					// SUCCESS
+				}
+				else
+				{
+					// TODO: Handle error
+				}
+			}
 		}
 	}
-#elif __linux__
-#endif
-	extraction_directory->remove();
+	// TODO: Check if this is the right way
+	delete it;
 }
 
 QByteArray RPCS3UpdaterQt::GetFileHash(QFile *file, QCryptographicHash::Algorithm algorithm)
@@ -275,31 +315,38 @@ QByteArray RPCS3UpdaterQt::GetFileHash(QFile *file, QCryptographicHash::Algorith
 	return hash;
 }
 
-void RPCS3UpdaterQt::CleanUp(QDir directory)
+void RPCS3UpdaterQt::CleanUp(const QDir& directory)
 {
-	QStringList files = directory.entryList(QDir::NoDotAndDotDot | QDir::Dirs | QDir::Files);
-	foreach(QString file, files)
+	QFileInfoList files = directory.entryInfoList(QDir::NoDotAndDotDot | QDir::Dirs | QDir::Files);
+	foreach(const QFileInfo file_info, files)
 	{
-		QFileInfo info(file);
-		if (forbidden_directories.contains(info.fileName())) continue;
-		if (info.isDir()) 
+		if (forbidden_directories.contains(file_info.fileName())) continue;
+		if (file_info.isDir()) 
 		{
-			CleanUp(QDir(info.absoluteFilePath()));
+			CleanUp(QDir(file_info.absoluteFilePath()));
 		}
 		else
 		{
-			if (info.suffix().compare(old_extension) == 0)
+			if (file_info.suffix().compare(deprecated_extension) == 0)
 			{
-				QFile file(info.absoluteFilePath());
-				qDebug() << file;
-				qDebug() << file.remove();
-				qDebug() << file.errorString();
+				QFile deprecated_file(file_info.absoluteFilePath());
+				if (deprecated_file.remove())
+				{
+					qDebug() << "Successfully deleted deprecated file: " << deprecated_file;
+				}
+				else
+				{
+					qDebug() << "Error occured while deleting deprecated file... Check your privilege!";
+					qDebug() << "Error message: " << deprecated_file.errorString();
+					qDebug() << "Offending file: " << deprecated_file;
+					// TODO: Handle error?
+				}
 			}
 		}
 	}
 }
 
-void RPCS3UpdaterQt::ShowProgress(QString message)
+void RPCS3UpdaterQt::ShowDownloadProgress(const QString& message)
 {
 	ui.progressBar->setValue(0);
 	ui.progressBar->setEnabled(true);
