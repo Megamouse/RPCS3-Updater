@@ -23,10 +23,12 @@
 
 #include <memory>
 
-static const QStringList forbidden_directories = {
+static const QStringList forbidden_directories =
+{
 	"dev_hdd0" , "dev_hdd1" , "data" , "dev_flash" , "dev_usb000" , "shaderlog"
 };
 static const QString deprecated_extension = "rpcs3-deprecated";
+static const QString api = "https://update.rpcs3.net/?c=XXXXXXXX";
 
 class RPCS3UpdaterQt : public QMainWindow
 {
@@ -39,7 +41,7 @@ private:
 	bool ReadJSON(QByteArray data);
 	QString SaveFile(QNetworkReply *network_reply);
 	void ShowDownloadProgress(const QString& message);
-	void Extract(QString path);
+	void Extract(const QString& path);
 	static QByteArray GetFileHash(QFile *file, QCryptographicHash::Algorithm algorithm = QCryptographicHash::Algorithm::Md5);
 	static void CleanUp(const QDir& directory = QDir(qApp->applicationDirPath()));
 	void UpdateFiles();
@@ -48,10 +50,8 @@ private:
 
 	std::unique_ptr<QNetworkAccessManager> network_access_manager;
 	std::unique_ptr<QTemporaryDir> extraction_directory, download_directory;
-	QProcess *extract_process;
+	std::unique_ptr<QProcess> extract_process;
 	QNetworkReply *network_reply;
-
-	QString api = "https://update.rpcs3.net/?c=XXXXXXXX";
 
 private slots:
 	void OnAbout();
@@ -60,4 +60,5 @@ private slots:
 	void OnDownloadFinished();
 	void OnUpdate();
 	void OnUpdateFinished();
+	void OnErrorOccured(QProcess::ProcessError error);
 };
